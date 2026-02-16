@@ -132,11 +132,19 @@ ALLOWED_COMMANDS = {
 
 # --- FastAPI Setup ---
 # Using app initialized at start for global error handling
-ALLOWED_ORIGINS = os.getenv('ALLOWED_ORIGINS', '*').split(',')
+raw_origins = os.getenv('ALLOWED_ORIGINS', '*')
+if raw_origins == '*':
+    ALLOWED_ORIGINS = ["*"]
+else:
+    # Robust parsing: split by comma, strip whitespace, and filter empty strings
+    ALLOWED_ORIGINS = [o.strip() for o in raw_origins.split(',') if o.strip()]
+
+logger.info(f"CORS: Loaded Allowed Origins: {ALLOWED_ORIGINS}")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=True if "*" not in ALLOWED_ORIGINS else False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
