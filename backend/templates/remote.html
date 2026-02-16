@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Nana Remote</title>
+    <!-- Use bundled local Socket.IO for 100% offline support -->
+    <script src="/static/socket.io.min.js"></script>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --primary: #38bdf8;
+            --text: #f8fafc;
+            --accent: #f43f5e;
+            --success: #10b981;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', system-ui, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #status-bar {
+            padding: 10px;
+            display: flex;
+            justify-content: space-between;
+            background: var(--surface);
+            font-size: 14px;
+            z-index: 10;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 5px;
+            background: var(--accent);
+        }
+
+        .connected .status-dot {
+            background: var(--success);
+        }
+
+        #main-container {
+            flex-grow: 1;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #waiting-screen {
+            position: absolute;
+            inset: 0;
+            background: var(--bg);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 40px;
+            z-index: 5;
+            transition: opacity 0.5s, transform 0.5s;
+        }
+
+        #waiting-screen.hidden {
+            opacity: 0;
+            pointer-events: none;
+            transform: scale(1.1);
+        }
+
+        .pulse-logo {
+            width: 80px;
+            height: 80px;
+            background: var(--primary);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            box-shadow: 0 0 30px var(--primary);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.7);
+            }
+
+            70% {
+                transform: scale(1);
+                box-shadow: 0 0 0 20px rgba(56, 189, 248, 0);
+            }
+
+            100% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(56, 189, 248, 0);
+            }
+        }
+
+        #touchpad {
+            flex-grow: 1;
+            background: var(--surface);
+            margin: 15px;
+            border-radius: 20px;
+            box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            touch-action: none;
+        }
+
+        #touchpad::after {
+            content: "TOUCHPAD";
+            opacity: 0.1;
+            font-size: 3rem;
+            font-weight: 800;
+        }
+
+        #keyboard-tray {
+            padding: 15px;
+            background: var(--surface);
+            border-radius: 20px 20px 0 0;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        #input-row {
+            display: flex;
+            gap: 10px;
+        }
+
+        #text-input {
+            flex-grow: 1;
+            padding: 12px;
+            border-radius: 10px;
+            border: none;
+            background: var(--bg);
+            color: var(--text);
+            font-size: 16px;
+        }
+
+        .special-keys {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+        }
+
+        button {
+            padding: 12px 5px;
+            border-radius: 8px;
+            border: none;
+            background: var(--bg);
+            color: var(--text);
+            font-weight: 600;
+            font-size: 14px;
+            transition: transform 0.1s, background 0.1s;
+        }
+
+        button:active {
+            transform: scale(0.95);
+            background: var(--primary);
+        }
+
+        .scroll-controls {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            position: absolute;
+            right: 20px;
+        }
+
+        .scroll-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        #app-notification {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--success);
+            padding: 10px 20px;
+            border-radius: 30px;
+            font-size: 14px;
+            font-weight: bold;
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 100;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="status-bar">
+        <span>
+            <div id="conn-dot" class="status-dot"></div> Nana Control
+        </span>
+        <span id="conn-text">Connecting...</span>
+    </div>
+
+    <div id="main-container">
+        <div id="app-notification">App Opened! control active.</div>
+
+        <div id="waiting-screen">
+            <div class="pulse-logo">N</div>
+            <h2>Waiting for Nana...</h2>
+            <p>Ensure your phone is on the <b>SAME WiFi</b> as your PC.</p>
+
+            <div style="margin-top: 20px; padding: 15px; background: rgba(255,255,255,0.05); border-radius: 10px;">
+                <p style="font-size: 13px; opacity: 0.7;">If it's stuck on 'Connecting', type your PC's IP:</p>
+                <div style="display: flex; gap: 5px;">
+                    <input type="text" id="manual-ip" placeholder="e.g. 192.168.1.5"
+                        style="flex: 1; padding: 8px; border-radius: 5px; border: 1px solid var(--surface); background: var(--bg); color: white;">
+                    <button onclick="manualConnect()"
+                        style="padding: 8px 15px; background: var(--primary); border-radius: 5px; font-weight: bold;">Connect</button>
+                </div>
+            </div>
+
+            <button onclick="document.getElementById('waiting-screen').classList.add('hidden')"
+                style="margin-top: 15px; background: var(--surface); border: 1px solid var(--primary); padding: 10px 20px; width: 100%; border-radius: 10px; opacity: 0.6;">Skip
+                to Touchpad</button>
+        </div>
+
+        <div id="touchpad">
+            <div class="scroll-controls">
+                <button class="scroll-btn" onclick="sendScroll('up')">↑</button>
+                <button class="scroll-btn" onclick="sendScroll('down')">↓</button>
+            </div>
+        </div>
+
+        <div id="keyboard-tray">
+            <div id="input-row">
+                <input type="text" id="text-input" placeholder="Type here...">
+                <button onclick="sendText()">Send</button>
+            </div>
+            <div class="special-keys">
+                <button onclick="sendKey('enter')">Enter</button>
+                <button onclick="sendKey('backspace')">Bksp</button>
+                <button onclick="sendKey('tab')">Tab</button>
+                <button onclick="sendKey('esc')">Esc</button>
+                <button onclick="sendKey('win')">Win</button>
+                <button onclick="sendKey('ctrl')">Ctrl</button>
+                <button onclick="sendKey('alt')">Alt</button>
+                <button onclick="sendKey('space')">Space</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const token = urlParams.get('token');
+        const socket = io({ query: { token } });
+
+        function manualConnect() {
+            const ip = document.getElementById('manual-ip').value.trim();
+            if (!ip) return alert("Please enter your PC's IP address");
+            window.location.href = `http://${ip}:3001/remote?token=${token}`;
+        }
+
+        const touchpad = document.getElementById('touchpad');
+        const statusBar = document.getElementById('status-bar');
+        const connText = document.getElementById('conn-text');
+        const waitingScreen = document.getElementById('waiting-screen');
+        const notification = document.getElementById('app-notification');
+
+        let lastX = 0, lastY = 0;
+        let isMoving = false;
+        let lastTap = 0;
+
+        socket.on('connect', () => {
+            statusBar.classList.add('connected');
+            connText.innerText = "Connected";
+        });
+
+        socket.on('disconnect', () => {
+            statusBar.classList.remove('connected');
+            connText.innerText = "Disconnected";
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error("Connection Error:", error);
+            connText.innerText = "Connect Error: " + error.message;
+            connText.style.color = "var(--accent)";
+        });
+
+        socket.on('connect_timeout', () => {
+            console.error("Connection Timeout");
+            connText.innerText = "Connection Timeout";
+        });
+
+        // Event for when Nana opens an app
+        socket.on('app_opened', (data) => {
+            console.log("App opened event received:", data);
+            waitingScreen.classList.add('hidden');
+            notification.innerText = `Controlling: ${data.app}`;
+            notification.style.opacity = '1';
+            setTimeout(() => { notification.style.opacity = '0'; }, 3000);
+        });
+
+        touchpad.addEventListener('touchstart', (e) => {
+            const touch = e.touches[0];
+            lastX = touch.clientX;
+            lastY = touch.clientY;
+            isMoving = true;
+
+            const now = Date.now();
+            if (now - lastTap < 300) {
+                socket.emit('mouse_click', { button: 'right' });
+            }
+            lastTap = now;
+        });
+
+        touchpad.addEventListener('touchmove', (e) => {
+            if (!isMoving) return;
+            const touch = e.touches[0];
+            const dx = (touch.clientX - lastX) * 3.5;
+            const dy = (touch.clientY - lastY) * 3.5;
+
+            socket.emit('mouse_move', { dx, dy });
+
+            lastX = touch.clientX;
+            lastY = touch.clientY;
+            e.preventDefault();
+        });
+
+        touchpad.addEventListener('touchend', (e) => {
+            isMoving = false;
+            // Simple click on tap
+            if (Date.now() - lastTap < 150) {
+                socket.emit('mouse_click', { button: 'left' });
+            }
+        });
+
+        function sendKey(key) {
+            socket.emit('key_press', { key });
+        }
+
+        function sendScroll(dir) {
+            socket.emit('mouse_scroll', { direction: dir });
+        }
+
+        function sendText() {
+            const input = document.getElementById('text-input');
+            if (input.value) {
+                socket.emit('type_text', { text: input.value });
+                input.value = '';
+            }
+        }
+
+        document.getElementById('text-input').addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendText();
+        });
+    </script>
+</body>
+
+</html>
