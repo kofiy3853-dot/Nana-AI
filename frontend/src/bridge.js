@@ -464,7 +464,9 @@ async function syncWithBackend({ command, intent, metadata = {}, history = [], m
             headers['Authorization'] = `Bearer ${token}`;
         }
 
-        const response = await fetch(`/api/execute`, {
+        // Use production API URL if provided, otherwise fallback to local relative path
+        const apiUrl = import.meta.env.VITE_API_URL || '';
+        const response = await fetch(`${apiUrl}/api/execute`, {
             method: 'POST',
             headers,
             body: JSON.stringify({ command, intent, metadata, history, mode }),
