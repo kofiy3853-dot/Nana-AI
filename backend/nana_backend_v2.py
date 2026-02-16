@@ -28,6 +28,24 @@ from slowapi.errors import RateLimitExceeded
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
+IS_WINDOWS = platform.system() == "Windows"
+
+def safe_startfile(path):
+    """Platform-independent way to open a file/URI."""
+    if IS_WINDOWS:
+        os.startfile(path)
+    else:
+        # On Linux (especially headless Render), we can't really "start" a local file
+        # but we can open URLs via webbrowser
+        if str(path).startswith(('http://', 'https://')):
+            webbrowser.open(str(path))
+        else:
+            logger.warning(f"Feature not available on Linux/Cloud: Cannot open local file {path}")
+
+def is_local_env():
+    """Check if we are in a local interactive environment."""
+    return IS_WINDOWS and (os.environ.get('DISPLAY') or IS_WINDOWS)
+
 app = FastAPI(title="Nana AI Backend")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -119,12 +137,20 @@ planner_agent = PlannerAgent()
 memory_manager = MemoryManager()
 
 # --- Security: Command Whitelist ---
-ALLOWED_COMMANDS = {
-    "sleep": 'powershell -Command "Add-Type -Assembly System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState(\'Suspend\', $false, $false)"',
-    "shutdown": 'shutdown /s /t 10',
-    "restart": 'shutdown /r /t 10',
-    "lock": 'rundll32.exe user32.dll,LockWorkStation'
-}
+if IS_WINDOWS:
+    ALLOWED_COMMANDS = {
+        "sleep": 'powershell -Command "Add-Type -Assembly System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState(\'Suspend\', $false, $false)"',
+        "shutdown": 'shutdown /s /t 10',
+        "restart": 'shutdown /r /t 10',
+        "lock": 'rundll32.exe user32.dll,LockWorkStation'
+    }
+else:
+    ALLOWED_COMMANDS = {
+        "sleep": "echo 'Sleep not supported on cloud'",
+        "shutdown": "echo 'Shutdown not supported on cloud'",
+        "restart": "echo 'Restart not supported on cloud'",
+        "lock": "echo 'Lock not supported on cloud'"
+    }
 
 # --- FastAPI Setup ---
 # Using app initialized at start for global error handling
@@ -183,16 +209,19 @@ async def disconnect(sid):
 
 @sio.event
 async def mouse_move(sid, data):
+    if not IS_WINDOWS: return
     dx, dy = data.get('dx', 0), data.get('dy', 0)
     pyautogui.moveRel(dx, dy)
 
 @sio.event
 async def mouse_click(sid, data):
+    if not IS_WINDOWS: return
     button = data.get('button', 'left')
     pyautogui.click(button=button)
 
 @sio.event
 async def mouse_scroll(sid, data):
+    if not IS_WINDOWS: return
     direction = data.get('direction', 'down')
     amount = -100 if direction == 'down' else 100
     pyautogui.scroll(amount)
@@ -566,7 +595,7 @@ async def handle_execute(req: CommandRequest):
             if clean in uri_map:
                 uri = uri_map[clean]
                 if uri.startswith('http'): webbrowser.open(uri)
-                else: os.startfile(uri)
+                else: safe_startfile(uri)
                 delayed_focus(target)
                 await sio.emit('app_opened', {'app': target})
                 return {"success": True, "data": f"Opening {target} 🚀", "intent": "open_app"}
@@ -574,7 +603,7 @@ async def handle_execute(req: CommandRequest):
             # 2. Check Folder Map
             if clean in folder_map:
                 path = folder_map[clean]
-                os.startfile(path)
+                safe_startfile(path)
                 await sio.emit('app_opened', {'app': clean})
                 return {"success": True, "data": f"Opening {clean} folder 📂", "intent": "open_folder"}
 
@@ -596,7 +625,7 @@ async def handle_execute(req: CommandRequest):
                         return {"success": True, "data": f"Opened {os.path.basename(path)} in Notepad 📝"}
 
                 # Default Opening
-                os.startfile(path)
+                safe_startfile(path)
                 basename = os.path.basename(path).split('.')[0]
                 delayed_focus(basename)
                 await sio.emit('app_opened', {'app': basename})
@@ -750,8 +779,8 @@ async def handle_execute(req: CommandRequest):
             return {"success": False, "data": f"Could not find a window matching '{target}'.", "intent": intent}
 
         if intent == 'minimize_all':
-            pyautogui.hotkey('win', 'd')
-            return {"success": True, "data": "Showing Desktop. 🖥️", "intent": intent}
+            if IS_WINDOWS: pyautogui.hotkey('win', 'd')
+            return {"success": True, "data": "Showing Desktop. 🖥️" if IS_WINDOWS else "Feature not available on Cloud.", "intent": intent}
 
         if intent == 'sys_health':
             cpu = psutil.cpu_percent(interval=0.5)
@@ -768,9 +797,10 @@ async def handle_execute(req: CommandRequest):
                 plugged = "PLUGGED IN" if battery.power_plugged else "BATTERY"
                 health_report.append(f"- **Battery**: `{battery.percent}%` ({plugged}) 🔋")
             
-            # Simple Disk check for C:
-            disk = psutil.disk_usage('C:')
-            health_report.append(f"- **Disk (C:)**: `{disk.percent}%` used (`{disk.free / (1024**3):.1f} GB` free) 💾")
+            # Simple Disk check
+            disk_path = 'C:' if IS_WINDOWS else '/'
+            disk = psutil.disk_usage(disk_path)
+            health_report.append(f"- **Disk ({disk_path})**: `{disk.percent}%` used (`{disk.free / (1024**3):.1f} GB` free) 💾")
             
             return {"success": True, "data": "\n".join(health_report), "intent": intent}
 
@@ -847,6 +877,8 @@ async def handle_execute(req: CommandRequest):
 
         if intent == 'media_control':
             cmd = command.lower().strip()
+            if not IS_WINDOWS:
+                return {"success": False, "data": "Media control is only available on local Windows machines."}
             if any(x in cmd for x in ['play', 'pause', 'resume']):
                 pyautogui.press('playpause')
                 return {"success": True, "data": "Toggled Play/Pause ⏯️"}
